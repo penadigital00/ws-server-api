@@ -41,12 +41,14 @@ app.use(express.json());
 
 app.post('/api/login', (req, res) => {
   const userId = req.body.userId;
+  console.log(userId);
   const token = jwt.sign({ userId: userId }, process.env.JWT_SECRET);
   res.json({ token });
 });
 
 app.post('/api/send-message', authenticateToken, (req, res) => {
   const { userId, message } = req.body;
+  console.log(userId);
   const senderUserId = req.user.userId;
 
   const client = clients.get(userId);
@@ -54,6 +56,21 @@ app.post('/api/send-message', authenticateToken, (req, res) => {
   if (client) {
     client.send(JSON.stringify({ type: 'new_message', message, from: senderUserId }));
     res.status(200).json({ success: true, message: 'Message sent' });
+  } else {
+    res.status(404).json({ success: false, message: 'User not found' });
+  }
+});
+
+app.post('/api/send-function-response', authenticateToken, (req, res) => {
+  const { userId, functionResponse } = req.body;
+  console.log(userId);
+  const senderUserId = req.user.userId;
+
+  const client = clients.get(userId);
+
+  if (client) {
+    client.send(JSON.stringify({ type: 'function_response', functionResponse, from: senderUserId }));
+    res.status(200).json({ success: true, message: 'function response sent' });
   } else {
     res.status(404).json({ success: false, message: 'User not found' });
   }
