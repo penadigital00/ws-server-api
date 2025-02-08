@@ -34,6 +34,11 @@ wss.on('connection', (ws, request) => {
     clients.delete(userId);
     console.log(`User ${userId} disconnected`);
   });
+
+  ws.on('error', (error) => {
+    console.error(`WebSocket error for user ${userId}:`, error);
+    clients.delete(userId);
+  });
 });
 
 app.use(cors());
@@ -56,6 +61,17 @@ app.post('/api/send-message', authenticateToken, (req, res) => {
   if (client) {
     client.send(JSON.stringify({ type: 'new_message', message, from: senderUserId }));
     res.status(200).json({ success: true, message: 'Message sent' });
+
+    // Cleanup client if necessary
+    client.on('close', () => {
+      clients.delete(userId);
+      console.log(`Client connection closed for user ${userId}`);
+    });
+
+    client.on('error', (error) => {
+      console.error(`WebSocket error for user ${userId}:`, error);
+      clients.delete(userId);
+    });
   } else {
     res.status(404).json({ success: false, message: 'User not found' });
   }
@@ -71,6 +87,12 @@ app.post('/api/send-function-response', authenticateToken, (req, res) => {
   if (client) {
     client.send(JSON.stringify({ type: 'function_response', functionResponse, from: senderUserId }));
     res.status(200).json({ success: true, message: 'function response sent' });
+
+    // Cleanup client if necessary
+    client.on('close', () => {
+      clients.delete(userId);
+      console.log(`Client connection closed for user ${userId}`);
+    });
   } else {
     res.status(404).json({ success: false, message: 'User not found' });
   }
@@ -90,8 +112,14 @@ server.on('upgrade', function upgrade(request, socket, head) {
       return;
     }
 
-    request.userId = decoded.userId;
-    wss.handleUpgrade(request, socket, head, function done(ws) {
+    // Ensure proper cleanup of socket
+    socket.on('close', () => {
+      // Perform any necessary cleanup here
+      console.log(`Socket closed for user ${decoded.userId}`);
+    });
+
+    // Handle the upgrade
+    wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
   });
