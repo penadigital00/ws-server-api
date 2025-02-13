@@ -1,21 +1,22 @@
-require('dotenv').config();
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const jwt = require('jsonwebtoken');
-const cors = require('cors');
+require("dotenv").config();
+const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+const jwt = require("jsonwebtoken");
+const cors = require("cors");
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 
+const MAX_CONNECTIONS_PER_USER = 5; // Set the maximum allowed connections per user
 const clients = new Map();
 
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
 
-  if (token == null) return res.sendStatus(401);
+  if (!token) return res.sendStatus(401);
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.sendStatus(403);
@@ -24,82 +25,72 @@ function authenticateToken(req, res, next) {
   });
 }
 
-wss.on('connection', (ws, request) => {
+wss.on("connection", (ws, request) => {
   const userId = request.userId;
   console.log(`User ${userId} connected`);
 
-  clients.set(userId, ws);
+  if (!clients.has(userId)) {
+    clients.set(userId, new Set());
+  }
 
-  ws.on('close', () => {
-    clients.delete(userId);
+  const userConnections = clients.get(userId);
+
+  if (userConnections.size >= MAX_CONNECTIONS_PER_USER) {
+    console.log(
+      `User ${userId} exceeded max connections. Closing new connection.`,
+    );
+    ws.close(1008, "Maximum connections limit reached");
+    return;
+  }
+
+  userConnections.add(ws);
+
+  ws.on("close", () => {
+    userConnections.delete(ws);
+    if (userConnections.size === 0) {
+      clients.delete(userId);
+    }
     console.log(`User ${userId} disconnected`);
   });
 
-  ws.on('error', (error) => {
+  ws.on("error", (error) => {
     console.error(`WebSocket error for user ${userId}:`, error);
-    clients.delete(userId);
+    userConnections.delete(ws);
+    if (userConnections.size === 0) {
+      clients.delete(userId);
+    }
   });
 });
 
 app.use(cors());
 app.use(express.json());
 
-app.post('/api/login', (req, res) => {
+app.post("/api/login", (req, res) => {
   const userId = req.body.userId;
   console.log(userId);
   const token = jwt.sign({ userId: userId }, process.env.JWT_SECRET);
   res.json({ token });
 });
 
-app.post('/api/send-message', authenticateToken, (req, res) => {
+app.post("/api/send-message", authenticateToken, (req, res) => {
   const { userId, message } = req.body;
   console.log(userId);
   const senderUserId = req.user.userId;
 
-  const client = clients.get(userId);
-
-  if (client) {
-    client.send(JSON.stringify({ type: 'new_message', message, from: senderUserId }));
-    res.status(200).json({ success: true, message: 'Message sent' });
-
-    // Cleanup client if necessary
-    client.on('close', () => {
-      clients.delete(userId);
-      console.log(`Client connection closed for user ${userId}`);
+  if (clients.has(userId)) {
+    clients.get(userId).forEach((client) => {
+      client.send(
+        JSON.stringify({ type: "new_message", message, from: senderUserId }),
+      );
     });
-
-    client.on('error', (error) => {
-      console.error(`WebSocket error for user ${userId}:`, error);
-      clients.delete(userId);
-    });
+    res.status(200).json({ success: true, message: "Message sent" });
   } else {
-    res.status(404).json({ success: false, message: 'User not found' });
+    res.status(404).json({ success: false, message: "User not found" });
   }
 });
 
-app.post('/api/send-function-response', authenticateToken, (req, res) => {
-  const { userId, functionResponse } = req.body;
-  console.log(userId);
-  const senderUserId = req.user.userId;
-
-  const client = clients.get(userId);
-
-  if (client) {
-    client.send(JSON.stringify({ type: 'function_response', functionResponse, from: senderUserId }));
-    res.status(200).json({ success: true, message: 'function response sent' });
-
-    // Cleanup client if necessary
-    client.on('close', () => {
-      clients.delete(userId);
-      console.log(`Client connection closed for user ${userId}`);
-    });
-  } else {
-    res.status(404).json({ success: false, message: 'User not found' });
-  }
-});
-
-server.on('upgrade', function upgrade(request, socket, head) {
-  const token = request.url.split('token=')[1];
+server.on("upgrade", function upgrade(request, socket, head) {
+  const token = request.url.split("token=")[1];
 
   if (!token) {
     socket.destroy();
@@ -112,15 +103,10 @@ server.on('upgrade', function upgrade(request, socket, head) {
       return;
     }
 
-    // Ensure proper cleanup of socket
-    socket.on('close', () => {
-      // Perform any necessary cleanup here
-      console.log(`Socket closed for user ${decoded.userId}`);
-    });
+    request.userId = decoded.userId;
 
-    // Handle the upgrade
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
+      wss.emit("connection", ws, request);
     });
   });
 });
@@ -130,12 +116,7 @@ server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-// Error handling
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send('Something broke!');
+process.on("unhandledRejection", (reason, promise) => {
+  console.log("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.log('Unhandled Rejection at:', promise, 'reason:', reason);
-});
