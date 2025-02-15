@@ -89,6 +89,40 @@ app.post("/api/send-message", authenticateToken, (req, res) => {
   }
 });
 
+app.post("/api/send-function-response", authenticateToken, (req, res) => {
+  const { userId, functionResponse } = req.body;
+  const senderUserId = req.user.userId;
+
+  if (!clients.has(userId)) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  const userConnections = clients.get(userId);
+
+  let sentSuccessfully = false;
+
+  userConnections.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(
+        JSON.stringify({
+          type: "function_response",
+          functionResponse,
+          from: senderUserId,
+        }),
+      );
+      sentSuccessfully = true;
+    }
+  });
+
+  if (sentSuccessfully) {
+    res.status(200).json({ success: true, message: "Function response sent" });
+  } else {
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to send function response" });
+  }
+});
+
 server.on("upgrade", function upgrade(request, socket, head) {
   const token = request.url.split("token=")[1];
 
@@ -119,4 +153,3 @@ server.listen(PORT, () => {
 process.on("unhandledRejection", (reason, promise) => {
   console.log("Unhandled Rejection at:", promise, "reason:", reason);
 });
-
